@@ -29,6 +29,8 @@
 
 namespace butil {
 
+const size_t UNIX_SOCKET_FILE_PATH_SIZE = 108;
+
 // Type of an IP address
 typedef struct in_addr ip_t;
 
@@ -85,10 +87,14 @@ const char* my_ip_cstr();
 // For UDS/IPv6 endpoint, to keep ABI compatibility, ip is ResourceId, and port is a special flag.
 // See str2endpoint implementation for details.
 struct EndPoint {
-    EndPoint() : ip(IP_ANY), port(0) {}
+    EndPoint() : ip(IP_ANY), port(0), socket_file("") {}
     EndPoint(ip_t ip2, int port2);
     explicit EndPoint(const sockaddr_in& in)
-        : ip(in.sin_addr), port(ntohs(in.sin_port)) {}
+        : ip(in.sin_addr), port(ntohs(in.sin_port)), socket_file("") {}
+    explicit EndPoint(const char* file) : ip(IP_ANY), port(0),
+                                            socket_file(file) {}
+    explicit EndPoint(const std::string& file) : ip(IP_ANY), port(0),
+                                            socket_file(file) {}
 
     EndPoint(const EndPoint&);
     ~EndPoint();
@@ -98,11 +104,13 @@ struct EndPoint {
     
     ip_t ip;
     int port;
+    std::string socket_file;
 };
 
 struct EndPointStr {
     const char* c_str() const { return _buf; }
-    char _buf[sizeof("unix:") + sizeof(sockaddr_un::sun_path)];
+    // char _buf[sizeof("unix:") + sizeof(sockaddr_un::sun_path)];
+    char _buf[UNIX_SOCKET_FILE_PATH_SIZE];
 };
 
 // Convert EndPoint to c-style string. Notice that you can serialize 
@@ -111,7 +119,13 @@ struct EndPointStr {
 // Example: printf("point=%s\n", endpoint2str(point).c_str());
 EndPointStr endpoint2str(const EndPoint&);
 
-// Convert string `ip_and_port_str' to a EndPoint *point.
+// is an unix socket endpoint or not
+bool is_unix_sock_endpoint(const EndPoint& point);
+
+// is sock file name is valid
+bool is_sock_file_name_valid(const char* filename);
+
+// Convert string `ip_and_port_str or unix_socket_file_path' to a EndPoint *point.
 // Returns 0 on success, -1 otherwise.
 int str2endpoint(const char* ip_and_port_str, EndPoint* point);
 int str2endpoint(const char* ip_str, int port, EndPoint* point);

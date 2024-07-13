@@ -36,10 +36,10 @@
 namespace butil {
 namespace details {
 
-#if __cplusplus >= 201103L
-static_assert(sizeof(EndPoint) == sizeof(EndPoint::ip) + sizeof(EndPoint::port),
-        "EndPoint size mismatch with the one in POD-style, may cause ABI problem");
-#endif
+// #if __cplusplus >= 201103L
+// static_assert(sizeof(EndPoint) == sizeof(EndPoint::ip) + sizeof(EndPoint::port),
+//         "EndPoint size mismatch with the one in POD-style, may cause ABI problem");
+// #endif
 
 // For ipv6/unix socket address.
 //

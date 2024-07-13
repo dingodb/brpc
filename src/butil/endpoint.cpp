@@ -92,7 +92,7 @@ void EndPoint::reset(void) {
     port = 0;
 }
 
-EndPoint::EndPoint(ip_t ip2, int port2) : ip(ip2), port(port2) {
+EndPoint::EndPoint(ip_t ip2, int port2) : ip(ip2), port(port2), socket_file("") {
     // Should never construct an extended endpoint by this way
     if (ExtendedEndPoint::is_extended(*this)) {
         CHECK(0) << "EndPoint construct with value that points to an extended EndPoint";
@@ -167,6 +167,10 @@ int ip2hostname(ip_t ip, std::string* host) {
 
 EndPointStr endpoint2str(const EndPoint& point) {
     EndPointStr str;
+    if (is_unix_sock_endpoint(point)) {
+        snprintf(str._buf, sizeof(str._buf), "%s", point.socket_file.c_str());
+        return str;
+    }
     if (ExtendedEndPoint::is_extended(point)) {
         ExtendedEndPoint* eep = ExtendedEndPoint::address(point);
         if (eep) {
@@ -674,6 +678,15 @@ sa_family_t get_endpoint_type(const EndPoint& point) {
 
 bool is_endpoint_extended(const EndPoint& point) {
     return ExtendedEndPoint::is_extended(point);
+}
+
+bool is_unix_sock_endpoint(const EndPoint& point) {
+    return !point.socket_file.empty();
+}
+
+bool is_sock_file_name_valid(const char* filename) {
+    return strlen(filename) < UNIX_SOCKET_FILE_PATH_SIZE;
+
 }
 
 }  // namespace butil
