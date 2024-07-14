@@ -1739,7 +1739,7 @@ TEST_F(SocketTest, single_threaded_connect_and_write_unix_socket) {
     ASSERT_TRUE(listening_fd > 0);
     butil::make_non_blocking(listening_fd);
     ASSERT_EQ(0, messenger->AddHandler(pairs[0]));
-    ASSERT_EQ(0, messenger->StartAccept(listening_fd, -1, NULL));
+    ASSERT_EQ(0, messenger->StartAccept(listening_fd, -1, nullptr, false));
 
     brpc::SocketId id = 8888;
     brpc::SocketOptions options;

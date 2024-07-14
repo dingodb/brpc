@@ -100,13 +100,14 @@ TEST(EndPointTest, endpoint) {
     ASSERT_EQ(0, butil::str2endpoint(" 127.0.0.1: 289 ", &p4));
     ASSERT_STREQ("127.0.0.1", butil::ip2str(p4.ip).c_str());
     ASSERT_EQ(289, p4.port);
-    ASSERT_FALSE(butil::is_unix_sock_endpoint(p5));
+    ASSERT_FALSE(butil::is_unix_sock_endpoint(p4));
     
     butil::EndPoint p5;
     ASSERT_EQ(-1, hostname2endpoint("localhost:-1", &p5));
     ASSERT_EQ(-1, hostname2endpoint("localhost:65536", &p5));
     ASSERT_EQ(0, hostname2endpoint("localhost:65535", &p5)) << berror();
     ASSERT_EQ(0, hostname2endpoint("localhost:0", &p5));
+    ASSERT_FALSE(butil::is_unix_sock_endpoint(p5));
 
 #ifdef BAIDU_INTERNAL
     butil::EndPoint p6;
