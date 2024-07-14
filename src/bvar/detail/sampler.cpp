@@ -1,11 +1,11 @@
 // Copyright (c) 2015 Baidu, Inc.
-// 
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// 
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,6 +15,7 @@
 // Author: Ge,Jun (gejun@baidu.com)
 // Date: Tue Jul 28 18:14:40 CST 2015
 
+#include <gflags/gflags.h>
 #include "butil/time.h"
 #include "butil/memory/singleton_on_pthread_once.h"
 #include "bvar/reducer.h"
@@ -41,6 +42,10 @@ struct CombineSampler {
     }
 };
 
+// True iff pthread_atfork was called. The callback to atfork works for child
+// of child as well, no need to register in the child again.
+static bool registered_atfork = false;
+
 // Call take_sample() of all scheduled samplers.
 // This can be done with regular timer thread, but it's way too slow(global
 // contention + log(N) heap manipulations). We need it to be super fast so that
@@ -54,13 +59,11 @@ struct CombineSampler {
 // deletion is taken place in the thread as well.
 class SamplerCollector : public bvar::Reducer<Sampler*, CombineSampler> {
 public:
-    SamplerCollector() : _created(false), _stop(false), _cumulated_time_us(0) {
-        int rc = pthread_create(&_tid, NULL, sampling_thread, this);
-        if (rc != 0) {
-            LOG(FATAL) << "Fail to create sampling_thread, " << berror(rc);
-        } else {
-            _created = true;
-        }
+    SamplerCollector()
+        : _created(false)
+        , _stop(false)
+        , _cumulated_time_us(0) {
+        create_sampling_thread();
     }
     ~SamplerCollector() {
         if (_created) {
@@ -70,33 +73,82 @@ public:
         }
     }
 
-    static double get_cumulated_time(void* arg) {
-        return ((SamplerCollector*)arg)->_cumulated_time_us / 1000.0 / 1000.0;
-    }
-    
 private:
+    // Support for fork:
+    // * The singleton can be null before forking, the child callback will not
+    //   be registered.
+    // * If the singleton is not null before forking, the child callback will
+    //   be registered and the sampling thread will be re-created.
+    // * A forked program can be forked again.
+
+    static void child_callback_atfork() {
+        butil::get_leaky_singleton<SamplerCollector>()->after_forked_as_child();
+    }
+
+    void create_sampling_thread() {
+        const int rc = pthread_create(&_tid, NULL, sampling_thread, this);
+        if (rc != 0) {
+            LOG(FATAL) << "Fail to create sampling_thread, " << berror(rc);
+        } else {
+            _created = true;
+            if (!registered_atfork) {
+                registered_atfork = true;
+                pthread_atfork(NULL, NULL, child_callback_atfork);
+            }
+        }
+    }
+
+    void after_forked_as_child() {
+        _created = false;
+        create_sampling_thread();
+    }
+
     void run();
-    
+
     static void* sampling_thread(void* arg) {
-        ((SamplerCollector*)arg)->run();
+        static_cast<SamplerCollector*>(arg)->run();
         return NULL;
+    }
+
+    static double get_cumulated_time(void* arg) {
+        return static_cast<SamplerCollector*>(arg)->_cumulated_time_us / 1000.0 / 1000.0;
     }
 
 private:
     bool _created;
     bool _stop;
+    pid_t _created_pid;
     int64_t _cumulated_time_us;
     pthread_t _tid;
 };
 
+PassiveStatus<double>* g_cumulated_time_bvar = NULL;
+bvar::PerSecond<bvar::PassiveStatus<double> >* g_sampling_thread_usage_bvar = NULL;
+
+DEFINE_int32(bvar_sampler_thread_start_delay_us, 10000, "bvar sampler thread start delay us");
+
 void SamplerCollector::run() {
+    ::usleep(FLAGS_bvar_sampler_thread_start_delay_us);
+    
+#ifndef UNIT_TEST
+    // NOTE:
+    // * Following vars can't be created on thread's stack since this thread
+    //   may be adandoned at any time after forking.
+    // * They can't created inside the constructor of SamplerCollector as well,
+    //   which results in deadlock.
+    if (g_cumulated_time_bvar == NULL) {
+        g_cumulated_time_bvar =
+            new PassiveStatus<double>(get_cumulated_time, this);
+    }
+    if (g_sampling_thread_usage_bvar == NULL) {
+        g_sampling_thread_usage_bvar =
+            new bvar::PerSecond<bvar::PassiveStatus<double> >(
+                    "bvar_sampler_collector_usage", g_cumulated_time_bvar, 10);
+    }
+#endif
+
     butil::LinkNode<Sampler> root;
     int consecutive_nosleep = 0;
-#ifndef UNIT_TEST
-    PassiveStatus<double> cumulated_time(get_cumulated_time, this);
-    bvar::PerSecond<bvar::PassiveStatus<double> > usage(
-            "bvar_sampler_collector_usage", &cumulated_time, 10);
-#endif
     while (!_stop) {
         int64_t abstime = butil::gettimeofday_us();
         Sampler* s = this->reset();
@@ -133,7 +185,7 @@ void SamplerCollector::run() {
         }
         if (slept) {
             consecutive_nosleep = 0;
-        } else {            
+        } else {
             if (++consecutive_nosleep >= WARN_NOSLEEP_THRESHOLD) {
                 consecutive_nosleep = 0;
                 LOG(WARNING) << "bvar is busy at sampling for "

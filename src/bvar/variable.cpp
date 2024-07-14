@@ -56,6 +56,8 @@ static bool validate_bvar_abort_on_same_name(const char*, bool v) {
 const bool ALLOW_UNUSED dummy_bvar_abort_on_same_name = ::GFLAGS_NS::RegisterFlagValidator(
     &FLAGS_bvar_abort_on_same_name, validate_bvar_abort_on_same_name);
 
+DEFINE_bool(bvar_log_error_on_same_name, false,
+            "Log error when names of bvar are same");
 
 DEFINE_bool(bvar_log_dumpped,  false,
             "[For debugging] print dumpped info"
@@ -173,9 +175,16 @@ int Variable::expose_impl(const butil::StringPiece& prefix,
         // abort the program if needed.
         s_bvar_may_abort = true;
     }
-        
-    LOG(ERROR) << "Already exposed `" << _name << "' whose value is `"
-               << describe_exposed(_name) << '\'';
+
+    std::ostringstream oss;
+    oss << "Already exposed `" << _name << "' whose value is `"
+        << describe_exposed(_name) << '\'';
+    if (FLAGS_bvar_log_error_on_same_name) {
+        LOG(ERROR) << oss.str();
+    } else {
+        LOG(WARNING) << oss.str();
+    }
+
     _name.clear();
     return -1;
 }
